@@ -23,6 +23,7 @@ WHITE = CENTER_X = FONT_LARGE = 1
 DARKGREY = CENTER_Y = FONT_SCORE = 2
 YELLOW = CENTER = 3
 MIDRED = NO_BLIT = 4
+RED = 6
 
 fonts = None
 
@@ -41,22 +42,25 @@ current_player = 0
 max_player = 2
 # ------- per player --------
 playfield = [[], []]  # the array of vertex, holding the borders of the game
+player_coords = [[], []] # an x/y coordinate
 player_lives = [0, 0]  # num lives of both players
 scores = [0, 0]
 # ---------------------
+player_size = 3.0
+player_start = [128, 239]
 start_player_lives = 3
 live_coord = (234, 14)
 highscore = [(30000, "QIX") for i in range(10)]
 new_playfield = [(16, 39), (16, 239), (240, 239), (240, 39)]
 
 def init():
-    global window_surface, screen, logo, fonts, active_live, inactive_live
+    global window_surface, screen, logo, fonts, active_live, inactive_live, player_lives, player_coords
     pygame.init()
     window_surface = pygame.display.set_mode([WINDOW_WIDTH, WINDOW_HEIGHT])
     screen = pygame.Surface((WIDTH, HEIGHT))
-    fonts = [pygame.font.Font("data/qix-small.ttf", int(8.0 * Y_SCALE)),
-             pygame.font.Font("data/qix-large.ttf", int(8.0 * Y_SCALE)),
-             pygame.font.Font("data/qix-large.ttf", int(10.0 * Y_SCALE))]
+    fonts = [pygame.font.Font("data/ladylike_small.ttf", int(8.0 * Y_SCALE)),
+             pygame.font.Font("data/ladylike_large.ttf", int(8.0 * Y_SCALE)),
+             pygame.font.Font("data/ladylike_large.ttf", int(10.0 * Y_SCALE))]
     logo, _ = hal_load_image(os.path.join('data', 'qix_logo.png'))
     logo = pygame.transform.scale(logo, (int(56.0 * X_SCALE), int(20 * Y_SCALE)))
     active_live, _ = hal_load_image(os.path.join('data', 'qix_live_w.png'))
@@ -64,6 +68,8 @@ def init():
     inactive_live, _ = hal_load_image(os.path.join('data', 'qix_live_r.png'))
     inactive_live = pygame.transform.scale(inactive_live, (int(3.0 * X_SCALE), int(3.0 * Y_SCALE)))
     reset_playfield(0)
+    player_lives = [start_player_lives, start_player_lives]
+    player_coords = [player_start, player_start]
 
 
 def gameloop():		# http://www.koonsolo.com/news/dewitters-gameloop/
@@ -106,10 +112,11 @@ def hal_load_image(fullname, color_key=None):
 
 
 def paint_game():
-    hal_blt(logo, (24, 16))
+    hal_blt(logo, (20, 16))
     paint_playfield()
     paint_score()
     paint_claimed_and_lives()
+    paint_player()
 
 
 
@@ -180,6 +187,31 @@ def paint_claimed_and_lives():
                 hal_blt(active_live, start_coord)
             else:
                 hal_blt(inactive_live, start_coord)
+
+
+def hal_draw_rect(point_1, point_2, arg_color):
+    point_1 = (point_1[0] * X_SCALE, point_1[1] * Y_SCALE)
+    point_2 = (point_2[0] * X_SCALE, point_2[1] * Y_SCALE)
+    pygame.draw.rect(screen, arg_color, (point_1[0], point_1[1], point_2[0] - point_1[0], point_2[1] - point_1[1]))
+
+
+def vector_add(v1, v2):
+    return [v1[0] + v2[0], v1[1] + v2[1]]
+
+
+def vector_sub(v1, v2):
+    return [v1[0] - v2[0], v1[1] - v2[1]]
+
+
+def paint_player():
+    pos = player_coords[current_player]
+    player = [vector_add(pos, (-player_size, 0)), vector_add(pos, (0, player_size)),
+              vector_add(pos, (player_size, 0)), vector_add(pos, (0, -player_size))]
+    draw_list(player, color[RED], True)
+    if X_SCALE > 1.0:
+        hal_draw_rect(vector_add(pos, (-1, -1)), vector_add(pos, (1, 1)), color[WHITE])
+    else:
+        hal_draw_rect(pos, vector_add(pos, (1, 1)), color[WHITE])  # add single pixel (pygame draws a 3x3 rect on w=0)
 
 
 if __name__ == "__main__":
