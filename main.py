@@ -54,7 +54,7 @@ color = [(0, 0, 0), (255, 255, 255), (73, 73, 73),        # BLACK,   WHITE,  DAR
          (145, 36, 18), (0, 127, 127)]                    # DARKRED, CYAN
 frame_counter = 0  # counts the frames (updating qix not every frame)
 current_player = 0
-max_player = 2
+max_player = 1
 # ------- per player --------
 playfield = [[], []]  # the array of vertex, holding the borders of the game
 old_polys = [[], []]
@@ -67,6 +67,12 @@ players_path = []  # the path the player will draw on screen
 player_size = 3.0
 player_start = [128, 239]
 pressed_keys = []  # sequence of pressed keys and current state
+dead_counter = 0
+dead_count_dir = 1  # direction of dead anim
+is_dead = False
+deathray_distance = 4  # distance between diagonal lines
+no_of_deathrays = 8  # number of lines
+deathray_prolong = .5  # how many pixels every line grows after each step
 new_playfield = [(16, 39), (16, 239), (240, 239), (240, 39)]
 fuse_sleep = 1000  # time of players wait until fuse starts chasing the player in ms
 fuse = [0, 0, 0, False]  # fuse hunts player, if he draws a line and stops[x,y,sleep_counter,visible]
@@ -247,14 +253,17 @@ def vector_sub(v1, v2):
 
 
 def paint_player():
-    pos = player_coords[current_player]
-    player = [vector_add(pos, (-player_size, 0)), vector_add(pos, (0, player_size)),
-              vector_add(pos, (player_size, 0)), vector_add(pos, (0, -player_size))]
-    draw_list(player, color[RED], True)
-    if X_SCALE > 1.0:
-        hal_draw_rect(vector_add(pos, (-1, -1)), vector_add(pos, (1, 1)), color[WHITE])
+    if is_dead:
+        death_anim()
     else:
-        hal_draw_rect(pos, vector_add(pos, (1, 1)), color[WHITE])  # add single pixel (pygame draws a 3x3 rect on w=0)
+        pos = player_coords[current_player]
+        player = [vector_add(pos, (-player_size, 0)), vector_add(pos, (0, player_size)),
+                  vector_add(pos, (player_size, 0)), vector_add(pos, (0, -player_size))]
+        draw_list(player, color[RED], True)
+        if X_SCALE > 1.0:
+            hal_draw_rect(vector_add(pos, (-1, -1)), vector_add(pos, (1, 1)), color[WHITE])
+        else:
+            hal_draw_rect(pos, vector_add(pos, (1, 1)), color[WHITE])  # add single pixel (pygame draws a 3x3 rect on w=0)
 
 
 def vector_equal(v1, v2, epsilon=0.00001):
@@ -598,21 +607,30 @@ def move_player(movement):
 
 
 def handle_movement():
-    movement = [0, 0]
-    if left:
-        movement[0] -= 1
-    if right:
-        movement[0] += 1
-    if up:
-        movement[1] -= 1
-    if down:
-        movement[1] += 1
-    if player_lives[current_player] > 0:
-        candidate = move_player(movement)
-        if move_mode[0] == MM_VERTICAL or move_mode[0] == MM_HORIZONTAL:
-            if candidate == player_coords[current_player] and not half_frame_rate:
-                move_fuse()
-        player_coords[current_player] = candidate
+    global move_mode, is_dead, dead_counter, dead_count_dir
+    if is_dead:
+        dead_counter += dead_count_dir * SKIP_TICKS
+        if dead_counter <= 0:
+            dead_count_dir = 0
+            is_dead = False
+    else:
+        movement = [0, 0]
+        if fire_fast and move_mode[1] == MM_SPEED_SLOW:
+            move_mode[1] = MM_SPEED_FAST
+        if left:
+            movement[0] -= 1
+        if right:
+            movement[0] += 1
+        if up:
+            movement[1] -= 1
+        if down:
+            movement[1] += 1
+        if player_lives[current_player] > 0:
+            candidate = move_player(movement)
+            if move_mode[0] == MM_VERTICAL or move_mode[0] == MM_HORIZONTAL:
+                if candidate == player_coords[current_player] and not half_frame_rate:
+                    move_fuse()
+            player_coords[current_player] = candidate
 
 
 def press_key(key):
@@ -811,11 +829,70 @@ def move_fuse():
         if fuse[2] > fuse_sleep:  # TODO: add up time player is waiting on path
             fuse[3] = True
             fuse[0:2] = calc_vertex_from_1d_path(players_path, fuse[0:2], 1, close=False)
-            if vector_equal(fuse[0:2], player_coords[current_player]):  # DONE: fuse catches player!
-                fuse[0:2] = players_path[0]
+            if vector_equal(fuse[0:2], player_coords[current_player]):  # fuse catches player!
+                kill_player()
         else:
             fuse[2] += SKIP_TICKS
 
+
+def calc_max_exploding_line_steps():
+    """  Calculates the number of steps for death_anim to play so that all lines left the screen
+    :return: Number of steps so that no line segment is visible on screen anymore (to end dead animation)
+    """
+    max_steps = (max(  # what is the max number of steps to reach the border of screen
+        min(player_coords[current_player][0], player_coords[current_player][1]),
+        min(player_coords[current_player][1], GAME_WIDTH - player_coords[current_player][0]),
+        min(GAME_HEIGHT - player_coords[current_player][1], GAME_WIDTH - player_coords[current_player][0]),
+        min(GAME_HEIGHT - player_coords[current_player][1], player_coords[current_player][0]))
+                 / deathray_distance) + no_of_deathrays
+    max_steps += max_steps * float(deathray_prolong) / deathray_distance  # adapt the no of jmps for diagonal line segm
+    return SKIP_TICKS * 2.0 * max_steps
+
+
+def death_anim():
+    """shows the player animation in dependency of dead_counter (rays of diagonal lines)
+       is calculating the number of max dead_counter (to make all lines disappear)
+    """
+    global dead_counter
+    max_count = calc_max_exploding_line_steps()
+    i_end = int(float(dead_counter)/SKIP_TICKS)
+    if i_end < 10:
+        i_start = 1
+    else:
+        i_start = i_end - no_of_deathrays
+    for index in range(i_start, i_end):
+        for d1, d2 in [(1, 1), (-1, -1), (-1, 1), (1, -1)]:  # d1/d2 are x/y-directions
+            pt_end = (player_coords[current_player][0] + d1 * index * deathray_distance,
+                      player_coords[current_player][1] + d2 * index * deathray_distance)
+            p1 = (pt_end[0] - deathray_prolong * d1 * index, pt_end[1] + deathray_prolong * d2 * index)
+            p2 = (pt_end[0] + deathray_prolong * d1 * index, pt_end[1] - deathray_prolong * d2 * index)
+            hal_draw_line(p1, p2,(255, 255, 255))
+    if dead_counter > max_count:  # all lines out of the screen?
+        revive_player()
+        dead_counter = calc_max_exploding_line_steps()
+
+
+def revive_player():
+    global dead_count_dir, player_coords, players_path, player_lives, current_player, game_mode
+    if player_lives[current_player] > 0:
+        player_lives[current_player] -= 1
+        reset_player_pos()
+        dead_count_dir = -1
+
+
+def reset_player_pos():
+    global players_path
+    if len(players_path) > 0:
+        player_coords[current_player] = players_path[0]
+        players_path = list()
+        move_mode[0] = MM_GRID
+        fuse[3] = False
+
+
+def kill_player():
+    global is_dead, dead_count_dir
+    is_dead = True
+    dead_count_dir = 1
 
 
 if __name__ == "__main__":
