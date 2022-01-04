@@ -77,7 +77,8 @@ new_playfield = [(16, 39), (16, 239), (240, 239), (240, 39)]
 fuse_sleep = 1000  # time of players wait until fuse starts chasing the player in ms
 fuse = [0, 0, 0, False]  # fuse hunts player, if he draws a line and stops[x,y,sleep_counter,visible]
 sprt_fuse = []  # the array of the fuse sprites
-
+all_sparx = []  # sparx:x, y, speed, supersparx(=1, normal=0), IsIOnPlayerPath, PointToStopFlip, PolyToWanderFlip
+sprt_sparx = []
 start_player_lives = 3
 move_mode = [] # holds state and sub_state(for movement) of the general game
 live_coord = (234, 14)
@@ -105,11 +106,18 @@ def init():
         tmp = pygame.transform.scale(tmp, (max(int(size[2] * X_SCALE), 1), max(int(size[3] * Y_SCALE), 1)))
         tmp.set_colorkey(Color(0))
         sprt_fuse.append(tmp)
+    for index in range(14):
+        tmp, size = hal_load_image(os.path.join('data', 'sparx', 'sparx_%02d.png' % (index + 1)))
+        tmp = pygame.transform.scale(tmp, (max(int(size[2] * X_SCALE), 1), max(int(size[3] * Y_SCALE), 1)))
+        tmp.set_colorkey(Color(0))
+        sprt_sparx.append(tmp)
     reset_playfield(0)
     player_lives = [start_player_lives, start_player_lives]
     player_coords = [player_start, player_start]
     move_mode = [MM_GRID, MM_SPEED_SLOW]
     fuse = [0, 0, 0, False]  # fuse hunts player, if he draws a line and stops[x,y,sleep_timer,visible]
+    reset_sparx(0)
+
 
 
 def gameloop():		# http://www.koonsolo.com/news/dewitters-gameloop/
@@ -163,6 +171,7 @@ def paint_game():
     paint_claimed_and_lives()
     paint_playerpath()
     paint_player()
+    paint_sparx()
 
 
 def get_real_time():
@@ -893,6 +902,33 @@ def kill_player():
     global is_dead, dead_count_dir
     is_dead = True
     dead_count_dir = 1
+
+
+def calc_1d_path(poly_path, close=True):
+    """calculates the total length of the path"""
+    retval = 0
+    for p1, p2 in pairwise(poly_path):  # calc deltas and sum up
+        retval += abs(p1[0] - p2[0])
+        retval += abs(p1[1] - p2[1])
+    if close:
+        retval += abs(poly_path[-1][0] - poly_path[0][0])
+        retval += abs(poly_path[-1][1] - poly_path[0][1])
+    return retval
+
+
+def reset_sparx(index_player, player_pos=None):
+    global all_sparx
+    if player_pos is None:
+        player_pos = player_coords[index_player]
+    x1, y1 = calc_vertex_from_1d_path(playfield[index_player], player_pos,
+                                      int(calc_1d_path(playfield[index_player]) / 2))
+    all_sparx = [[x1, y1, -1 , 0, False, [], []],
+                 [x1, y1,  1, 0, False, [], []]]
+
+
+def paint_sparx():
+    for sparc in all_sparx:
+        show_sprite(sprt_sparx, sparc[:2])
 
 
 if __name__ == "__main__":
