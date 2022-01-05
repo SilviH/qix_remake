@@ -62,6 +62,8 @@ old_poly_colors = [[], []]
 player_coords = [[], []] # an x/y coordinate
 player_lives = [0, 0]  # num lives of both players
 scores = [0, 0]
+qix_coords = [[[], []], [[], []]]  # x/y, x/y coordinates  of qix lines for each player
+max_qix = [1, 1]  # number of qixes (in later levels are 2 if you manage to split them you win the level)
 # ---------------------
 players_path = []  # the path the player will draw on screen
 player_size = 3.0
@@ -74,6 +76,14 @@ deathray_distance = 4  # distance between diagonal lines
 no_of_deathrays = 8  # number of lines
 deathray_prolong = .5  # how many pixels every line grows after each step
 new_playfield = [(16, 39), (16, 239), (240, 239), (240, 39)]
+qix_target = [(0, 0), (0, 0)]
+qix_speed = [[], []]   # x/y x/y , d1/d2, speed and duration(until direction change) of qix lines
+qix_change_counter = 0
+qix_min_change = 3
+qix_max_change = 15
+qix_min_speed = 1
+qix_max_speed = 10
+qix_color_index = [0, 0]
 fuse_sleep = 1000  # time of players wait until fuse starts chasing the player in ms
 fuse = [0, 0, 0, False]  # fuse hunts player, if he draws a line and stops[x,y,sleep_counter,visible]
 sprt_fuse = []  # the array of the fuse sprites
@@ -88,7 +98,7 @@ fire_slow = fire_fast = up = down = left = right = False
 
 def init():
     global window_surface, screen, logo, fonts, active_live, inactive_live, player_lives, player_coords, move_mode, \
-        fuse, sprt_fuse
+        fuse, sprt_fuse, max_qix, qix_coords
     pygame.init()
     window_surface = pygame.display.set_mode([WINDOW_WIDTH, WINDOW_HEIGHT])
     screen = pygame.Surface((WIDTH, HEIGHT))
@@ -117,6 +127,10 @@ def init():
     move_mode = [MM_GRID, MM_SPEED_SLOW]
     fuse = [0, 0, 0, False]  # fuse hunts player, if he draws a line and stops[x,y,sleep_timer,visible]
     reset_sparx(0)
+    max_qix = [1, 1]
+    qix_coords = [[[], []], [[], []]]  # 2 qixes with x x/y coordinate of qix
+    init_qix(0)
+    init_qix(1)
 
 
 
@@ -172,6 +186,7 @@ def paint_game():
     paint_playerpath()
     paint_player()
     paint_sparx()
+    paint_qix()
 
 
 def get_real_time():
@@ -622,6 +637,8 @@ def handle_movement():
         if dead_counter <= 0:
             dead_count_dir = 0
             is_dead = False
+        if dead_count_dir < 0:
+            move_qix()
     else:
         movement = [0, 0]
         if fire_fast and move_mode[1] == MM_SPEED_SLOW:
@@ -641,6 +658,7 @@ def handle_movement():
                     move_fuse()
             player_coords[current_player] = candidate
             move_sparx()
+            move_qix()
 
 
 def press_key(key):
@@ -981,6 +999,154 @@ def move_sparx():
                 if len(collision_with_player) != 0:
                     kill_player()
                 break
+
+
+def get_random_vector(arg_max, arg_min=0.0):  # TODO :optimize: rnd_x and get y by pythagoras; length is always 1.0 then
+    retval = [random.random() - .5, random.random() - .5]
+    length = math.sqrt(retval[0] * retval[0] + retval[1] * retval[1])
+    factor = random.random() * (arg_max - arg_min) + arg_min
+    retval[0] = (retval[0] / length) * factor
+    retval[1] = (retval[1] / length) * factor
+    return retval
+
+
+def qix_change_color(index):
+    global qix_color_index
+    qix_colors = [MIDRED, BLUE, GREEN]
+    if random.random() * 100 < 7:
+        qix_color_index[index] = (qix_color_index[index] + 1) % len(qix_colors)
+    return color[qix_colors[qix_color_index[index]]]
+
+
+def paint_qix():
+    for q in range(max_qix[current_player]):  # paint qixes
+        for qix in qix_coords[current_player][q]:
+            qix_lst = [(qix[0], qix[1]), (qix[2], qix[3])]
+            draw_list(qix_lst, qix[4], False)
+
+
+def move_qix():
+    global frame_counter, qix_coords, point_of_death
+    if frame_counter % 3 == 0:  # handle qix movement
+        for q in range(max_qix[current_player]):
+            qix = qix_move(q)
+            qix.append(qix_change_color(q))
+            qix_coords[current_player][q] = qix_coords[current_player][q][1:]
+            qix_coords[current_player][q].append(qix)
+            if move_mode[0] != MM_GRID:
+                for line in qix_coords[current_player][q]:
+                    collision = check_line_vs_poly(line[:2], line[2:], players_path, close=False, sort=False)
+                    if len(collision) != 0:
+                        kill_player()
+
+
+def qix_set_target():
+    retval = []
+    min_max = new_playfield
+    while True:
+        pt1 = [random.random()*(min_max[2][0] - min_max[0][0]),
+               random.random()*(min_max[2][1] - min_max[0][1])]
+        if is_inside(playfield[current_player], pt1, (0, 0)):
+            break
+    retval.append(pt1)
+    # find point2 in max dist of around 1/4 of screen
+    max_dist = (GAME_WIDTH / 4, GAME_HEIGHT / 4)
+    loop_counter = 0
+    while True:
+        pt2 = get_random_vector(1.0, 1.0)
+        pt2 = vector_add(pt1, (pt2[0] * random.random() * max_dist[0], pt2[1] * random.random() * max_dist[1]))
+        if is_inside(playfield[current_player], pt2, (0, 0)):
+            break
+        loop_counter += 1
+        if loop_counter > 5:
+            max_dist = (max_dist[0] - 2, max_dist[1] - 2)
+    retval.append(pt2)
+    return retval
+
+
+def check_collisions(points_to_check):
+    pt1 = is_inside(playfield[current_player], points_to_check[0], (0, 0))
+    pt2 = is_inside(playfield[current_player], points_to_check[1], (0, 0))
+    return pt1, pt2
+
+
+def qix_move(q):
+    """
+    Rules for qix movement:
+    1. change direction every n frames
+    2. check for collision of moving pts
+    3. check for distance between dots.
+    4. check for line collision.
+    if any of the above occurred do:
+      - move dot back to where it was before
+      - create new direction and check again
+    Calculates the new qix point by moving it by speed and checking for collision with playfield and adjusting
+    speed and position accordingly
+    :return: the final coordinates of new qix point
+    """
+    global qix_speed, qix_target, qix_change_counter
+    retval = []
+    dx = abs(qix_coords[current_player][q][-1][0] - qix_coords[current_player][q][-1][2])
+    dy = abs(qix_coords[current_player][q][-1][1] - qix_coords[current_player][q][-1][3])
+    qix_change_counter -= 1
+    loop_detect = 0
+    vel_candidates = [(0, 0), (0, 0)]
+    pt_candidates = [(0, 0), (0, 0)]
+    if qix_change_counter < 0 or (dx**2 + dy**2) > ((GAME_WIDTH/4)**2 + (GAME_HEIGHT/4)**2):
+        qix_target = qix_set_target()
+        qix_change_counter = random.random() * (qix_max_change - qix_min_change) + qix_min_change
+        qix_speed[q][0] = calc_velocities(qix_coords[current_player][q][-1][:2], qix_target[0])
+        qix_speed[q][1] = calc_velocities(qix_coords[current_player][q][-1][2:], qix_target[1])
+    vel_candidates[0] = (qix_speed[q][0][0], qix_speed[q][0][1])
+    vel_candidates[1] = (qix_speed[q][1][0], qix_speed[q][1][1])
+    pt_candidates[0] = vector_add(qix_coords[current_player][q][-1], vel_candidates[0])
+    pt_candidates[1] = vector_add(qix_coords[current_player][q][-1][2:], vel_candidates[1])
+    candidates = check_line_vs_poly(pt_candidates[0], pt_candidates[1], playfield[current_player], True)
+    pt1_collision, pt2_collision = check_collisions(pt_candidates)
+    while not pt1_collision \
+            or not pt2_collision \
+            or len(candidates) > 0:  # collision of moved point occurred?
+        loop_detect += 1
+        if loop_detect > 10:
+            break
+        qix_target = qix_set_target()
+        qix_change_counter = random.random() * qix_max_change + qix_max_change
+        vel_candidates[0] = calc_velocities(pt_candidates[0], qix_target[0])
+        vel_candidates[1] = calc_velocities(pt_candidates[1], qix_target[1])
+
+        pt_candidates[0] = vector_add(qix_coords[current_player][q][-1], vel_candidates[0])
+        pt_candidates[1] = vector_add(qix_coords[current_player][q][-1][2:], vel_candidates[1])
+        candidates = check_line_vs_poly(pt_candidates[0], pt_candidates[1], playfield[current_player], True)
+        pt1_collision, pt2_collision = check_collisions(pt_candidates)
+    qix_speed[q][0] = vel_candidates[0]
+    qix_speed[q][1] = vel_candidates[1]
+    retval.append(pt_candidates[0][0])
+    retval.append(pt_candidates[0][1])
+    retval.append(pt_candidates[1][0])
+    retval.append(pt_candidates[1][1])
+    return retval
+
+
+def init_qix(index_player):
+    global qix_coords, qix_speed
+    for q in range(max_qix[index_player]):
+        qix_speed[q] = [get_random_vector(15, 5), get_random_vector(15, 5)]
+        qix_coords[index_player][q] = []
+        for index in range(0, 7):
+            qix_coords[index_player][q].append(
+                [(GAME_WIDTH * 0.45) + index * qix_speed[q][0][0], (GAME_HEIGHT * 0.45) + index * qix_speed[q][0][1],
+                 (GAME_WIDTH * 0.45) + index * qix_speed[q][1][0], (GAME_HEIGHT * 0.45) + index * qix_speed[q][1][1],
+                 color[qix_color_index[q]]])
+            qix_change_color(q)
+        qix_speed[q] = [get_random_vector(15, 5), get_random_vector(15, 5)]
+
+
+def calc_velocities(pt_start, pt_goal):
+    dx, dy = vector_sub(pt_goal, pt_start)
+    length = math.sqrt(dx ** 2 + dy ** 2)
+    speed_factor = (random.random() * (qix_max_speed - qix_min_speed) + qix_min_speed)
+    retval = [speed_factor * dx / length, speed_factor * dy / length]
+    return retval
 
 
 if __name__ == "__main__":
