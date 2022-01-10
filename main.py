@@ -27,6 +27,8 @@ MM_SPEED_FAST = "fast"
 MM_SPEED_SLOW = "slow"
 MM_VERTICAL = "free_vertical"
 MM_HORIZONTAL = "free_horizontal"
+GM_GAME = "game"
+GM_GAMEOVER = "game_over"
 
 BLACK = FONT_NORMAL = 0
 WHITE = CENTER_X = FONT_LARGE = 1
@@ -45,6 +47,7 @@ fonts = None
 screen = None
 window_surface = None
 logo = None
+game_over = None
 active_live = None
 inactive_live = None
 
@@ -97,15 +100,17 @@ sprt_fuse = []  # the array of the fuse sprites
 all_sparx = []  # sparx:x, y, speed, supersparx(=1, normal=0), IsIOnPlayerPath, PointToStopFlip, PolyToWanderFlip
 sprt_sparx = []
 start_player_lives = 3
+game_mode = GM_GAMEOVER
 move_mode = [] # holds state and sub_state(for movement) of the general game
+game_over_coord = (81, 98)
 live_coord = (234, 14)
 highscore = [(30000, "QIX") for i in range(10)]
 fire_slow = fire_fast = up = down = left = right = False
 
 
 def init():
-    global window_surface, screen, logo, fonts, active_live, inactive_live, player_lives, player_coords, move_mode, \
-        fuse, sprt_fuse, max_qix, qix_coords
+    global window_surface, screen, logo, fonts, game_over, active_live, inactive_live, player_lives, player_coords, \
+        move_mode, fuse, sprt_fuse, sprt_sparx, max_qix, qix_coords
     pygame.init()
     window_surface = pygame.display.set_mode([WINDOW_WIDTH, WINDOW_HEIGHT])
     screen = pygame.Surface((WIDTH, HEIGHT))
@@ -114,6 +119,8 @@ def init():
              pygame.font.Font("data/ladylike_large.ttf", int(10.0 * Y_SCALE))]
     logo, _ = hal_load_image(os.path.join('data', 'qix_logo.png'))
     logo = pygame.transform.scale(logo, (int(56.0 * X_SCALE), int(20 * Y_SCALE)))
+    game_over, _ = hal_load_image(os.path.join('data', 'qix_game_over.png'))
+    game_over = pygame.transform.scale(game_over, (int(91 * X_SCALE), int(17 * Y_SCALE)))
     active_live, _ = hal_load_image(os.path.join('data', 'qix_live_w.png'))
     active_live = pygame.transform.scale(active_live, (int(3.0 * X_SCALE), int(3.0 * Y_SCALE)))
     inactive_live, _ = hal_load_image(os.path.join('data', 'qix_live_r.png'))
@@ -128,6 +135,7 @@ def init():
         tmp = pygame.transform.scale(tmp, (max(int(size[2] * X_SCALE), 1), max(int(size[3] * Y_SCALE), 1)))
         tmp.set_colorkey(Color(0))
         sprt_sparx.append(tmp)
+    set_game_mode(GM_GAMEOVER)
     reset_playfield(0)
     player_lives = [start_player_lives, start_player_lives]
     player_coords = [player_start, player_start]
@@ -189,11 +197,17 @@ def paint_game():
     hal_blt(logo, (20, 16))
     paint_playfield()
     paint_score()
-    paint_claimed_and_lives()
-    paint_playerpath()
-    paint_player()
-    paint_sparx()
-    paint_qix()
+    if game_mode == GM_GAME:
+        paint_playfield()
+        paint_claimed_and_lives()
+        paint_playerpath()
+        paint_player()
+        paint_sparx()
+        paint_qix()
+    if game_mode == GM_GAMEOVER:
+        paint_playfield()
+        paint_claimed_and_lives()
+        hal_blt(game_over, game_over_coord)
 
 
 def get_real_time():
@@ -225,8 +239,11 @@ def paint_playfield():
 
 
 def reset_playfield(index_player):
-    global playfield
+    global playfield, old_polys, old_poly_colors, players_path
     playfield[index_player] = new_playfield
+    old_polys[index_player] = []  # the polys which were the borders before (need for sparx movement)
+    old_poly_colors[index_player] = []  # the colors of the polys (fast or slow)
+    players_path = []  # the path the player will draw on screen
 
 
 def print_at(str_text, coords, txt_color=color[YELLOW], center_flags=0, anti_aliasing=1, use_font=FONT_NORMAL):
@@ -639,33 +656,34 @@ def move_player(movement):
 
 def handle_movement():
     global move_mode, is_dead, dead_counter, dead_count_dir
-    if is_dead:
-        dead_counter += dead_count_dir * SKIP_TICKS
-        if dead_counter <= 0:
-            dead_count_dir = 0
-            is_dead = False
-        if dead_count_dir < 0:
-            move_qix()
-    else:
-        movement = [0, 0]
-        if fire_fast and move_mode[1] == MM_SPEED_SLOW:
-            move_mode[1] = MM_SPEED_FAST
-        if left:
-            movement[0] -= 1
-        if right:
-            movement[0] += 1
-        if up:
-            movement[1] -= 1
-        if down:
-            movement[1] += 1
-        if player_lives[current_player] > 0:
-            candidate = move_player(movement)
-            if move_mode[0] == MM_VERTICAL or move_mode[0] == MM_HORIZONTAL:
-                if candidate == player_coords[current_player] and not half_frame_rate:
-                    move_fuse()
-            player_coords[current_player] = candidate
-            move_sparx()
-            move_qix()
+    if game_mode == GM_GAME:
+        if is_dead:
+            dead_counter += dead_count_dir * SKIP_TICKS
+            if dead_counter <= 0:
+                dead_count_dir = 0
+                is_dead = False
+            if dead_count_dir < 0:
+                move_qix()
+        else:
+            movement = [0, 0]
+            if fire_fast and move_mode == MM_SPEED_SLOW:
+                move_mode = MM_SPEED_FAST
+            if left:
+                movement[0] -= 1
+            if right:
+                movement[0] += 1
+            if up:
+                movement[1] -= 1
+            if down:
+                movement[1] += 1
+            if player_lives[current_player] > 0:
+                candidate = move_player(movement)
+                if move_mode[0] == MM_VERTICAL or move_mode[0] == MM_HORIZONTAL:
+                    if candidate == player_coords[current_player] and not half_frame_rate:
+                        move_fuse()
+                player_coords[current_player] = candidate
+                move_sparx()
+                move_qix()
 
 
 def press_key(key):
@@ -709,6 +727,10 @@ def release_key(key):
         up = status
     if key == pygame.K_DOWN and pygame.K_UP not in pressed_keys:
         down = status
+    if key == pygame.K_1:  # "1"-key
+        reset()
+    if key == pygame.K_2:  # "2"-key
+        reset()
 
 
 def paint_playerpath():
@@ -925,12 +947,14 @@ def death_anim():
 
 
 def revive_player():
-    global dead_count_dir, player_coords, players_path, player_lives, current_player, game_mode
+    global dead_count_dir, player_coords, players_path, player_lives, current_player
+    player_lives[current_player] -= 1
     if player_lives[current_player] > 0:
-        player_lives[current_player] -= 1
-        reset_player_pos()
         dead_count_dir = -1
+        reset_player_pos()
         reset_sparx(current_player)
+    else:
+        set_game_mode(GM_GAMEOVER)
 
 
 def reset_player_pos():
@@ -1208,6 +1232,32 @@ def generate_lines(center, width):
     return retval
 
 
+def set_game_mode(mode):
+    global game_mode
+    game_mode = mode
+
+
+def reset():
+    global current_player, player_lives, player_coords, move_mode, fuse, max_qix, qix_coords, \
+        fire_slow, fire_fast, up, down, left, right, is_dead, dead_counter, dead_count_dir, scores
+    current_player = 0
+    reset_playfield(0)
+    player_lives = [start_player_lives, start_player_lives]
+    player_coords = [player_start, player_start]
+    move_mode = [MM_GRID, MM_SPEED_SLOW]
+    fuse = [0, 0, 0, False]  # fuse hunts player, if he draws a line and stops[x,y,sleep_timer,visible]
+    scores = [0, 0]
+    reset_sparx(0)
+    max_qix = [1, 1]
+    qix_coords = [[[], []], [[], []]]  # 2 qixes with x x/y coordinate of qix
+    init_qix(0)
+    set_game_mode(GM_GAME)
+    fire_slow = fire_fast = up = down = left = right = is_dead = False
+    dead_counter = calc_max_exploding_line_steps()
+    dead_count_dir = -1
+    is_dead = True
+
+
 if __name__ == "__main__":
     print("pyQix")
     print("-----")
@@ -1216,6 +1266,7 @@ if __name__ == "__main__":
     print("On the occasion of the 40th anniversary of the release at 18th October 2021")
     print("Controls:")
     print("The standard MAME keyset is used:")
+    print("<1>, <2> start one player game")
     print("<CTRL> is FAST button")
     print("<ALT> is SLOW button")
     print("Cursor keys are Joystick")
